@@ -9,11 +9,12 @@ import {
 } from "../plugins/config-state.js";
 import {
   collectRelevantDoctorPluginIds,
+  collectRelevantDoctorPluginIdsForTouchedPaths,
   listPluginDoctorLegacyConfigRules,
 } from "../plugins/doctor-contract-registry.js";
+import { resolveManifestCommandAliasOwner } from "../plugins/manifest-command-aliases.runtime.js";
 import {
   loadPluginManifestRegistry,
-  resolveManifestCommandAliasOwner,
   resolveManifestContractPluginIds,
 } from "../plugins/manifest-registry.js";
 import { validateJsonSchemaValue } from "../plugins/schema-validator.js";
@@ -49,6 +50,18 @@ type AllowedValuesCollection = {
   hasValues: boolean;
 };
 type JsonSchemaLike = Record<string, unknown>;
+
+function stripDeprecatedValidationKeys(raw: unknown): unknown {
+  if (!isRecord(raw) || !isRecord(raw.commands) || !Object.hasOwn(raw.commands, "modelsWrite")) {
+    return raw;
+  }
+  const commands = { ...raw.commands };
+  delete commands.modelsWrite;
+  return {
+    ...raw,
+    commands,
+  };
+}
 
 const CUSTOM_EXPECTED_ONE_OF_RE = /expected one of ((?:"[^"]+"(?:\|"?[^"]+"?)*)+)/i;
 const SECRETREF_POLICY_DOC_URL = "https://docs.openclaw.ai/reference/secretref-credential-surface";
@@ -478,6 +491,10 @@ function mapZodIssueToConfigIssue(issue: unknown): ConfigValidationIssue {
   };
 }
 
+export const __testing = {
+  mapZodIssueToConfigIssue,
+};
+
 function isWorkspaceAvatarPath(value: string, workspaceDir: string): boolean {
   const workspaceRoot = path.resolve(workspaceDir);
   const resolved = path.resolve(workspaceRoot, value);
@@ -567,12 +584,26 @@ function validateGatewayTailscaleBind(config: OpenClawConfig): ConfigValidationI
  */
 export function validateConfigObjectRaw(
   raw: unknown,
+  opts?: {
+    touchedPaths?: ReadonlyArray<ReadonlyArray<string>>;
+  },
 ): { ok: true; config: OpenClawConfig } | { ok: false; issues: ConfigValidationIssue[] } {
-  const policyIssues = collectUnsupportedSecretRefPolicyIssues(raw);
+  const normalizedRaw = stripDeprecatedValidationKeys(raw);
+  const policyIssues = collectUnsupportedSecretRefPolicyIssues(normalizedRaw);
+  const doctorPluginIds = opts?.touchedPaths
+    ? collectRelevantDoctorPluginIdsForTouchedPaths({
+        raw: normalizedRaw,
+        touchedPaths: opts.touchedPaths,
+      })
+    : collectRelevantDoctorPluginIds(normalizedRaw);
+  const extraLegacyRules = listPluginDoctorLegacyConfigRules({
+    pluginIds: doctorPluginIds,
+  });
   const legacyIssues = findLegacyConfigIssues(
-    raw,
-    raw,
-    listPluginDoctorLegacyConfigRules({ pluginIds: collectRelevantDoctorPluginIds(raw) }),
+    normalizedRaw,
+    normalizedRaw,
+    extraLegacyRules,
+    opts?.touchedPaths,
   );
   if (legacyIssues.length > 0) {
     return {
@@ -583,7 +614,7 @@ export function validateConfigObjectRaw(
       })),
     };
   }
-  const validated = OpenClawSchema.safeParse(raw);
+  const validated = OpenClawSchema.safeParse(normalizedRaw);
   if (!validated.success) {
     const schemaIssues = validated.error.issues.map((issue) => mapZodIssueToConfigIssue(issue));
     return {

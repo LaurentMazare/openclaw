@@ -1,13 +1,13 @@
 import type { FinalizedMsgContext } from "../auto-reply/templating.js";
 import { getChannelPlugin, normalizeChannelId } from "../channels/plugins/index.js";
-import type { OpenClawConfig } from "../config/config.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type {
   PluginHookInboundClaimContext,
   PluginHookInboundClaimEvent,
   PluginHookMessageContext,
   PluginHookMessageReceivedEvent,
   PluginHookMessageSentEvent,
-} from "../plugins/types.js";
+} from "../plugins/hook-message.types.js";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -38,9 +38,13 @@ export type CanonicalInboundMessageHookContext = {
   provider?: string;
   surface?: string;
   threadId?: string | number;
+  // `mediaPath(s)` are files OpenClaw has already staged locally. `mediaUrl(s)`
+  // are provider/media-server references that may not exist on this host.
   mediaPath?: string;
+  mediaUrl?: string;
   mediaType?: string;
   mediaPaths?: string[];
+  mediaUrls?: string[];
   mediaTypes?: string[];
   originatingChannel?: string;
   originatingTo?: string;
@@ -48,6 +52,7 @@ export type CanonicalInboundMessageHookContext = {
   channelName?: string;
   isGroup: boolean;
   groupId?: string;
+  topicName?: string;
 };
 
 export type CanonicalSentMessageHookContext = {
@@ -94,6 +99,11 @@ export function deriveInboundMessageHookContext(
         (value): value is string => typeof value === "string" && value.length > 0,
       )
     : undefined;
+  const mediaUrls = Array.isArray(ctx.MediaUrls)
+    ? ctx.MediaUrls.filter(
+        (value): value is string => typeof value === "string" && value.length > 0,
+      )
+    : undefined;
   return {
     from: ctx.From ?? "",
     to: ctx.To,
@@ -122,8 +132,10 @@ export function deriveInboundMessageHookContext(
     surface: ctx.Surface,
     threadId: ctx.MessageThreadId,
     mediaPath: ctx.MediaPath ?? mediaPaths?.[0],
+    mediaUrl: ctx.MediaUrl ?? mediaUrls?.[0],
     mediaType: ctx.MediaType ?? mediaTypes?.[0],
     mediaPaths,
+    mediaUrls,
     mediaTypes,
     originatingChannel: ctx.OriginatingChannel,
     originatingTo: ctx.OriginatingTo,
@@ -131,6 +143,7 @@ export function deriveInboundMessageHookContext(
     channelName: ctx.GroupChannel,
     isGroup,
     groupId: isGroup ? conversationId : undefined,
+    topicName: ctx.TopicName,
   };
 }
 
@@ -260,12 +273,15 @@ export function toPluginInboundClaimEvent(
       originatingTo: canonical.originatingTo,
       senderE164: canonical.senderE164,
       mediaPath: canonical.mediaPath,
+      mediaUrl: canonical.mediaUrl,
       mediaType: canonical.mediaType,
       mediaPaths: canonical.mediaPaths,
+      mediaUrls: canonical.mediaUrls,
       mediaTypes: canonical.mediaTypes,
       guildId: canonical.guildId,
       channelName: canonical.channelName,
       groupId: canonical.groupId,
+      topicName: canonical.topicName,
     },
   };
 }
@@ -277,6 +293,7 @@ export function toPluginMessageReceivedEvent(
     from: canonical.from,
     content: canonical.content,
     timestamp: canonical.timestamp,
+    threadId: canonical.threadId,
     metadata: {
       to: canonical.to,
       provider: canonical.provider,
@@ -291,6 +308,7 @@ export function toPluginMessageReceivedEvent(
       senderE164: canonical.senderE164,
       guildId: canonical.guildId,
       channelName: canonical.channelName,
+      topicName: canonical.topicName,
     },
   };
 }
@@ -328,6 +346,7 @@ export function toInternalMessageReceivedContext(
       senderE164: canonical.senderE164,
       guildId: canonical.guildId,
       channelName: canonical.channelName,
+      topicName: canonical.topicName,
     },
   };
 }
